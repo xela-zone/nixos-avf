@@ -113,7 +113,66 @@ step_2() {
   sudo reboot
 }
 
-if [ ! -e "$STEP_MARKER" ]; then
+# Android 17+ does not expose /mnt/internal/linux/vm_config.json and boots /dev/vda1 directly
+install_android17() {
+  echo "deploy android 17 in-place root_part replacement"
+
+  cp "$IMG_LOC/root_part" "$HOME/nixos_root_part"
+  sudo e2fsck -fy "$HOME/nixos_root_part" || true
+
+  sudo mkdir -p /mnt/nixos_img
+  sudo mount -o loop "$HOME/nixos_root_part" /mnt/nixos_img
+
+  sudo mkdir -p /mnt/nixos_img/sbin /mnt/nixos_img/usr/bin /mnt/nixos_img/usr/sbin /mnt/nixos_img/usr/lib64 /mnt/nixos_img/lib/aarch64-linux-gnu
+  sudo ln -sfn /nix/var/nix/profiles/system/prepare-root /mnt/nixos_img/sbin/init
+  sudo ln -sfn /nix/var/nix/profiles/system/prepare-root /mnt/nixos_img/init
+
+  if [ -e /var/lib/cloud/seed/nocloud/root_files/usr/bin/linux_vm_manager ]; then
+    sudo cp -a /var/lib/cloud/seed/nocloud/root_files/usr/bin/linux_vm_manager /mnt/nixos_img/usr/bin/linux_vm_manager
+    sudo cp -a /var/lib/cloud/seed/nocloud/root_files/usr/lib64/* /mnt/nixos_img/usr/lib64/
+  elif [ -e /usr/bin/linux_vm_manager ]; then
+    sudo cp -a /usr/bin/linux_vm_manager /mnt/nixos_img/usr/bin/linux_vm_manager
+    sudo cp -a /usr/lib64/* /mnt/nixos_img/usr/lib64/
+  fi
+
+  if [ -e /usr/sbin/tcpstates-libbpf ]; then
+    sudo cp -a /usr/sbin/tcpstates-libbpf /mnt/nixos_img/usr/sbin/tcpstates-libbpf
+    sudo cp -Lf /lib/ld-linux-aarch64.so.1 /mnt/nixos_img/lib/
+    sudo cp -Lf \
+      /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 \
+      /lib/aarch64-linux-gnu/libelf.so.1 \
+      /lib/aarch64-linux-gnu/libz.so.1 \
+      /lib/aarch64-linux-gnu/libc.so.6 \
+      /lib/aarch64-linux-gnu/libzstd.so.1 \
+      /mnt/nixos_img/lib/aarch64-linux-gnu/
+  fi
+
+  sudo umount /mnt/nixos_img
+  sudo e2fsck -fy "$HOME/nixos_root_part" || true
+
+  sudo zstd -1 -T0 "$HOME/nixos_root_part" -o /dev/shm/clean_root_part.zst
+  rm -f "$HOME/nixos_root_part"
+  rm -rfv "$IMG_LOC"
+
+  sudo mkdir -p /dev/shm/bin /dev/shm/lib
+  sudo cp -Lf /usr/bin/bash /usr/bin/zstd /usr/bin/dd /usr/bin/sync /dev/shm/bin/
+  sudo cp -Lf /lib/ld-linux-aarch64.so.1 /dev/shm/lib/
+  for b in /dev/shm/bin/*; do
+    ldd "$b" | awk '/=> \/lib/ {print $3}' | xargs -r -I{} sudo cp -Lf "{}" /dev/shm/lib/
+  done
+
+  echo 1 | sudo tee /proc/sys/kernel/sysrq
+  sudo /dev/shm/lib/ld-linux-aarch64.so.1 --library-path /dev/shm/lib /dev/shm/bin/bash -c '
+    /dev/shm/lib/ld-linux-aarch64.so.1 --library-path /dev/shm/lib /dev/shm/bin/zstd -dc /dev/shm/clean_root_part.zst | \
+    /dev/shm/lib/ld-linux-aarch64.so.1 --library-path /dev/shm/lib /dev/shm/bin/dd of=/dev/vda1 bs=4M status=progress && \
+    /dev/shm/lib/ld-linux-aarch64.so.1 --library-path /dev/shm/lib /dev/shm/bin/sync && \
+    echo b > /proc/sysrq-trigger
+  '
+}
+
+if ! sudo test -e "$VM_LOC/vm_config.json"; then
+  install_android17
+elif [ ! -e "$STEP_MARKER" ]; then
   step_1
 else
   step_2
