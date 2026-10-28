@@ -236,7 +236,10 @@ in
       systemd.services.linux_vm_manager = {
         description = "Android 17 Linux VM Manager Guest Agent";
         unitConfig = {
-          ConditionPathExists = "!/mnt/internal/ca.crt";
+          ConditionPathExists = [
+            "!/mnt/internal/ca.crt"
+            "/mnt/cidata/root_files/usr/bin/linux_vm_manager"
+          ];
         };
         after = [
           "network.target"
@@ -259,11 +262,12 @@ in
         ];
 
         preStart = ''
-          mkdir -p /usr/bin /usr/sbin /usr/lib/openssh /usr/libexec/openssh
+          mkdir -p /usr/bin /usr/sbin /usr/lib/openssh /usr/libexec/openssh /lib /lib64
           ln -sfn ${pkgs.openssh}/libexec/sftp-server /usr/lib/openssh/sftp-server
           ln -sfn ${pkgs.openssh}/libexec/sftp-server /usr/libexec/openssh/sftp-server
-          if [ -e /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 ]; then
-            cp -Lf /lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
+          ln -sfn ${pkgs.stdenv.cc.bintools.dynamicLinker} /lib/${baseNameOf pkgs.stdenv.cc.bintools.dynamicLinker}
+          if [ -d /lib64 ]; then
+            ln -sfn ${pkgs.stdenv.cc.bintools.dynamicLinker} /lib64/${baseNameOf pkgs.stdenv.cc.bintools.dynamicLinker}
           fi
           if [ ! -x /usr/sbin/tcpstates-libbpf ]; then
             cat << 'EOF' > /usr/sbin/tcpstates-libbpf
